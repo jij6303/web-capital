@@ -11,16 +11,23 @@
 <header>
   <h1>🌍 세계 수도 퀴즈</h1>
   <div class="stats">
+    <span id="region-badge"></span>
     <span>문제 <strong id="question-count">1 / 10</strong></span>
     <span>점수 <strong id="score">0</strong></span>
   </div>
 </header>
 
-<div id="quiz-screen">
+<!-- ① 챕터 선택 화면 -->
+<div id="select-screen">
+  <div class="select-title">지역을 선택하세요</div>
+  <div id="region-cards"></div>
+</div>
+
+<!-- ② 퀴즈 화면 -->
+<div id="quiz-screen" style="display:none">
   <div class="map-container">
     <svg id="map" viewBox="0 0 960 500"></svg>
   </div>
-
   <div class="question-panel">
     <div class="country-label">국가</div>
     <div id="country-name">Loading...</div>
@@ -31,36 +38,32 @@
   </div>
 </div>
 
-<div id="result-screen">
+<!-- ③ 결과 화면 -->
+<div id="result-screen" style="display:none">
   <h2>퀴즈 완료!</h2>
   <div id="final-score"></div>
-  <button id="restart-btn">다시 도전</button>
+  <div class="result-buttons">
+    <button id="retry-btn">같은 지역 다시</button>
+    <button id="home-btn">지역 선택으로</button>
+  </div>
 </div>
 
-<!-- D3 + TopoJSON -->
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 <script src="data.js"></script>
 <script>
-// ── Map setup ───────────────────────────────────────────────
+// ── Map setup ────────────────────────────────────────────
 const svg = d3.select("#map");
 const width = 960, height = 500;
-const projection = d3.geoNaturalEarth1()
-  .scale(153)
-  .translate([width / 2, height / 2]);
+const projection = d3.geoNaturalEarth1().scale(153).translate([width / 2, height / 2]);
 const path = d3.geoPath().projection(projection);
 
-// ISO numeric → ISO alpha-2 lookup (built from COUNTRIES array later)
-let numericToAlpha2 = {};
+let mapReady = false;
+let pendingHighlight = null;
 
-// Load world topology
 fetch("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json")
   .then(r => r.json())
   .then(world => {
-    const countries = topojson.feature(world, world.objects.countries);
-
-    // Build numeric→alpha2 map using a well-known lookup table
-    // (ISO 3166-1 numeric codes for the countries we have)
     const NUM_TO_A2 = {
       4:"AF",8:"AL",12:"DZ",20:"AD",24:"AO",28:"AG",32:"AR",51:"AM",
       36:"AU",40:"AT",31:"AZ",44:"BS",48:"BH",50:"BD",52:"BB",112:"BY",
@@ -89,41 +92,52 @@ fetch("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json")
       764:"TH",626:"TL",768:"TG",776:"TO",780:"TT",788:"TN",792:"TR",
       795:"TM",798:"TV",800:"UG",804:"UA",784:"AE",826:"GB",840:"US",
       858:"UY",860:"UZ",548:"VU",862:"VE",704:"VN",887:"YE",894:"ZM",
-      716:"ZW"
+      716:"ZW",384:"CI"
     };
-    numericToAlpha2 = NUM_TO_A2;
 
-    // Draw graticule
-    svg.append("path")
-      .datum(d3.geoGraticule()())
-      .attr("class", "graticule")
-      .attr("d", path);
+    const countries = topojson.feature(world, world.objects.countries);
 
-    // Draw sphere (ocean)
-    svg.append("path")
-      .datum({type: "Sphere"})
-      .attr("class", "sphere")
-      .attr("d", path);
+    svg.append("path").datum({type:"Sphere"}).attr("class","sphere").attr("d",path);
+    svg.append("path").datum(d3.geoGraticule()()).attr("class","graticule").attr("d",path);
 
-    // Draw countries
     svg.selectAll(".country")
       .data(countries.features)
       .enter().append("path")
-        .attr("class", "country")
+        .attr("class","country")
         .attr("data-id", d => NUM_TO_A2[+d.id] || "")
         .attr("d", path);
 
-    // Draw country borders
     svg.append("path")
-      .datum(topojson.mesh(world, world.objects.countries, (a, b) => a !== b))
-      .attr("class", "borders")
-      .attr("d", path);
+      .datum(topojson.mesh(world, world.objects.countries, (a,b) => a !== b))
+      .attr("class","borders").attr("d",path);
 
-    // Start quiz after map is ready
-    loadQuestion();
+    mapReady = true;
+    if (pendingHighlight) { highlightCountry(pendingHighlight); pendingHighlight = null; }
   });
 
-// ── Quiz logic ──────────────────────────────────────────────
+function highlightCountry(code) {
+  if (!mapReady) { pendingHighlight = code; return; }
+  d3.selectAll(".country").classed("highlighted", false);
+  d3.selectAll(`.country[data-id="${code}"]`).classed("highlighted", true);
+}
+
+// ── Region select screen ─────────────────────────────────
+const regionCards = document.getElementById("region-cards");
+
+REGIONS.forEach(region => {
+  const pool = region.id === "all" ? COUNTRIES : COUNTRIES.filter(c => c.region === region.id);
+  const card = document.createElement("div");
+  card.className = "region-card";
+  card.innerHTML = `
+    <div class="region-emoji">${region.emoji}</div>
+    <div class="region-name">${region.name}</div>
+    <div class="region-count">${pool.length}개국</div>
+  `;
+  card.addEventListener("click", () => startQuiz(region));
+  regionCards.appendChild(card);
+});
+
+// ── Quiz logic ───────────────────────────────────────────
 const TOTAL_QUESTIONS = 10;
 const OPTIONS_COUNT = 4;
 
@@ -132,29 +146,33 @@ let questionIndex = 0;
 let currentCountry = null;
 let usedCountries = [];
 let answered = false;
+let currentRegion = null;
+let questionPool = [];
 
 const questionCountEl = document.getElementById("question-count");
-const scoreEl = document.getElementById("score");
-const countryNameEl = document.getElementById("country-name");
-const optionsEl = document.getElementById("options");
-const feedbackEl = document.getElementById("feedback");
-const nextBtn = document.getElementById("next-btn");
-const resultScreen = document.getElementById("result-screen");
-const quizScreen = document.getElementById("quiz-screen");
-const finalScoreEl = document.getElementById("final-score");
-const restartBtn = document.getElementById("restart-btn");
+const scoreEl          = document.getElementById("score");
+const countryNameEl    = document.getElementById("country-name");
+const optionsEl        = document.getElementById("options");
+const feedbackEl       = document.getElementById("feedback");
+const nextBtn          = document.getElementById("next-btn");
+const regionBadge      = document.getElementById("region-badge");
 
-function shuffle(arr) {
-  return [...arr].sort(() => Math.random() - 0.5);
-}
+function shuffle(arr) { return [...arr].sort(() => Math.random() - 0.5); }
 
-function getRandomCountries(exclude, count) {
-  return shuffle(COUNTRIES.filter(c => c.code !== exclude.code)).slice(0, count);
-}
+function startQuiz(region) {
+  currentRegion = region;
+  questionPool = region.id === "all" ? [...COUNTRIES] : COUNTRIES.filter(c => c.region === region.id);
+  score = 0;
+  questionIndex = 0;
+  usedCountries = [];
+  scoreEl.textContent = 0;
+  regionBadge.textContent = `${region.emoji} ${region.name}`;
 
-function highlightCountry(code) {
-  d3.selectAll(".country").classed("highlighted", false);
-  d3.selectAll(`.country[data-id="${code}"]`).classed("highlighted", true);
+  document.getElementById("select-screen").style.display = "none";
+  document.getElementById("result-screen").style.display = "none";
+  document.getElementById("quiz-screen").style.display = "flex";
+
+  loadQuestion();
 }
 
 function loadQuestion() {
@@ -164,7 +182,7 @@ function loadQuestion() {
   nextBtn.style.display = "none";
   optionsEl.innerHTML = "";
 
-  const remaining = COUNTRIES.filter(c => !usedCountries.includes(c.code));
+  const remaining = questionPool.filter(c => !usedCountries.includes(c.code));
   currentCountry = remaining[Math.floor(Math.random() * remaining.length)];
   usedCountries.push(currentCountry.code);
 
@@ -172,7 +190,11 @@ function loadQuestion() {
   countryNameEl.textContent = currentCountry.name;
   highlightCountry(currentCountry.code);
 
-  const wrongOptions = getRandomCountries(currentCountry, OPTIONS_COUNT - 1);
+  // Wrong options: prefer same region, fill from all if needed
+  const sameRegion = COUNTRIES.filter(c => c.code !== currentCountry.code && c.region === currentCountry.region);
+  const others     = COUNTRIES.filter(c => c.code !== currentCountry.code && c.region !== currentCountry.region);
+  const wrongPool  = shuffle([...sameRegion, ...others]);
+  const wrongOptions = wrongPool.slice(0, OPTIONS_COUNT - 1);
   const allOptions = shuffle([currentCountry, ...wrongOptions]);
 
   allOptions.forEach(country => {
@@ -218,23 +240,21 @@ nextBtn.addEventListener("click", () => {
 });
 
 function showResult() {
-  quizScreen.style.display = "none";
-  resultScreen.style.display = "flex";
+  document.getElementById("quiz-screen").style.display = "none";
+  document.getElementById("result-screen").style.display = "flex";
   const pct = Math.round((score / TOTAL_QUESTIONS) * 100);
   let emoji = "😢";
   if (pct >= 80) emoji = "🏆";
   else if (pct >= 50) emoji = "👍";
-  finalScoreEl.innerHTML = `${score} / ${TOTAL_QUESTIONS}<br><span style="font-size:2rem">${emoji}</span><br><span style="font-size:1rem;color:#888">${pct}점</span>`;
+  document.getElementById("final-score").innerHTML =
+    `${score} / ${TOTAL_QUESTIONS}<br><span style="font-size:2rem">${emoji}</span><br><span style="font-size:1rem;color:#888">${pct}점</span>`;
 }
 
-restartBtn.addEventListener("click", () => {
-  score = 0;
-  questionIndex = 0;
-  usedCountries = [];
-  scoreEl.textContent = 0;
-  resultScreen.style.display = "none";
-  quizScreen.style.display = "flex";
-  loadQuestion();
+document.getElementById("retry-btn").addEventListener("click", () => startQuiz(currentRegion));
+document.getElementById("home-btn").addEventListener("click", () => {
+  document.getElementById("result-screen").style.display = "none";
+  document.getElementById("select-screen").style.display = "flex";
+  regionBadge.textContent = "";
 });
 </script>
 </body>
