@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>세계 수도 퀴즈</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header>
+  <h1>🌍 세계 수도 퀴즈</h1>
+  <div class="stats">
+    <span>문제 <strong id="question-count">1 / 10</strong></span>
+    <span>점수 <strong id="score">0</strong></span>
+  </div>
+</header>
+
+<div id="quiz-screen">
+  <div class="map-container">
+    <svg id="map" viewBox="0 0 960 500"></svg>
+  </div>
+
+  <div class="question-panel">
+    <div class="country-label">국가</div>
+    <div id="country-name">Loading...</div>
+    <div class="question-text">이 나라의 수도는?</div>
+    <div id="options"></div>
+    <div id="feedback" class="feedback"></div>
+    <button id="next-btn">다음 문제</button>
+  </div>
+</div>
+
+<div id="result-screen">
+  <h2>퀴즈 완료!</h2>
+  <div id="final-score"></div>
+  <button id="restart-btn">다시 도전</button>
+</div>
+
+<!-- D3 + TopoJSON -->
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<script src="data.js"></script>
+<script>
+// ── Map setup ───────────────────────────────────────────────
+const svg = d3.select("#map");
+const width = 960, height = 500;
+const projection = d3.geoNaturalEarth1()
+  .scale(153)
+  .translate([width / 2, height / 2]);
+const path = d3.geoPath().projection(projection);
+
+// ISO numeric → ISO alpha-2 lookup (built from COUNTRIES array later)
+let numericToAlpha2 = {};
+
+// Load world topology
+fetch("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json")
+  .then(r => r.json())
+  .then(world => {
+    const countries = topojson.feature(world, world.objects.countries);
+
+    // Build numeric→alpha2 map using a well-known lookup table
+    // (ISO 3166-1 numeric codes for the countries we have)
+    const NUM_TO_A2 = {
+      4:"AF",8:"AL",12:"DZ",20:"AD",24:"AO",28:"AG",32:"AR",51:"AM",
+      36:"AU",40:"AT",31:"AZ",44:"BS",48:"BH",50:"BD",52:"BB",112:"BY",
+      56:"BE",84:"BZ",204:"BJ",64:"BT",68:"BO",70:"BA",72:"BW",76:"BR",
+      96:"BN",100:"BG",854:"BF",108:"BI",132:"CV",116:"KH",120:"CM",
+      124:"CA",140:"CF",148:"TD",152:"CL",156:"CN",170:"CO",174:"KM",
+      178:"CG",180:"CD",188:"CR",191:"HR",192:"CU",196:"CY",203:"CZ",
+      208:"DK",262:"DJ",212:"DM",214:"DO",218:"EC",818:"EG",222:"SV",
+      226:"GQ",232:"ER",233:"EE",748:"SZ",231:"ET",242:"FJ",246:"FI",
+      250:"FR",266:"GA",270:"GM",268:"GE",276:"DE",288:"GH",300:"GR",
+      308:"GD",320:"GT",324:"GN",624:"GW",328:"GY",332:"HT",340:"HN",
+      348:"HU",352:"IS",356:"IN",360:"ID",364:"IR",368:"IQ",372:"IE",
+      376:"IL",380:"IT",388:"JM",392:"JP",400:"JO",398:"KZ",404:"KE",
+      296:"KI",408:"KP",410:"KR",414:"KW",417:"KG",418:"LA",428:"LV",
+      422:"LB",426:"LS",430:"LR",434:"LY",438:"LI",440:"LT",442:"LU",
+      450:"MG",454:"MW",458:"MY",462:"MV",466:"ML",470:"MT",584:"MH",
+      478:"MR",480:"MU",484:"MX",583:"FM",498:"MD",492:"MC",496:"MN",
+      499:"ME",504:"MA",508:"MZ",104:"MM",516:"NA",520:"NR",524:"NP",
+      528:"NL",554:"NZ",558:"NI",562:"NE",566:"NG",807:"MK",578:"NO",
+      512:"OM",586:"PK",585:"PW",591:"PA",598:"PG",600:"PY",604:"PE",
+      608:"PH",616:"PL",620:"PT",634:"QA",642:"RO",643:"RU",646:"RW",
+      659:"KN",662:"LC",670:"VC",882:"WS",674:"SM",678:"ST",682:"SA",
+      686:"SN",688:"RS",690:"SC",694:"SL",702:"SG",703:"SK",705:"SI",
+      90:"SB",706:"SO",710:"ZA",728:"SS",724:"ES",144:"LK",729:"SD",
+      740:"SR",752:"SE",756:"CH",760:"SY",158:"TW",762:"TJ",834:"TZ",
+      764:"TH",626:"TL",768:"TG",776:"TO",780:"TT",788:"TN",792:"TR",
+      795:"TM",798:"TV",800:"UG",804:"UA",784:"AE",826:"GB",840:"US",
+      858:"UY",860:"UZ",548:"VU",862:"VE",704:"VN",887:"YE",894:"ZM",
+      716:"ZW"
+    };
+    numericToAlpha2 = NUM_TO_A2;
+
+    // Draw graticule
+    svg.append("path")
+      .datum(d3.geoGraticule()())
+      .attr("class", "graticule")
+      .attr("d", path);
+
+    // Draw sphere (ocean)
+    svg.append("path")
+      .datum({type: "Sphere"})
+      .attr("class", "sphere")
+      .attr("d", path);
+
+    // Draw countries
+    svg.selectAll(".country")
+      .data(countries.features)
+      .enter().append("path")
+        .attr("class", "country")
+        .attr("data-id", d => NUM_TO_A2[+d.id] || "")
+        .attr("d", path);
+
+    // Draw country borders
+    svg.append("path")
+      .datum(topojson.mesh(world, world.objects.countries, (a, b) => a !== b))
+      .attr("class", "borders")
+      .attr("d", path);
+
+    // Start quiz after map is ready
+    loadQuestion();
+  });
+
+// ── Quiz logic ──────────────────────────────────────────────
+const TOTAL_QUESTIONS = 10;
+const OPTIONS_COUNT = 4;
+
+let score = 0;
+let questionIndex = 0;
+let currentCountry = null;
+let usedCountries = [];
+let answered = false;
+
+const questionCountEl = document.getElementById("question-count");
+const scoreEl = document.getElementById("score");
+const countryNameEl = document.getElementById("country-name");
+const optionsEl = document.getElementById("options");
+const feedbackEl = document.getElementById("feedback");
+const nextBtn = document.getElementById("next-btn");
+const resultScreen = document.getElementById("result-screen");
+const quizScreen = document.getElementById("quiz-screen");
+const finalScoreEl = document.getElementById("final-score");
+const restartBtn = document.getElementById("restart-btn");
+
+function shuffle(arr) {
+  return [...arr].sort(() => Math.random() - 0.5);
+}
+
+function getRandomCountries(exclude, count) {
+  return shuffle(COUNTRIES.filter(c => c.code !== exclude.code)).slice(0, count);
+}
+
+function highlightCountry(code) {
+  d3.selectAll(".country").classed("highlighted", false);
+  d3.selectAll(`.country[data-id="${code}"]`).classed("highlighted", true);
+}
+
+function loadQuestion() {
+  answered = false;
+  feedbackEl.textContent = "";
+  feedbackEl.className = "feedback";
+  nextBtn.style.display = "none";
+  optionsEl.innerHTML = "";
+
+  const remaining = COUNTRIES.filter(c => !usedCountries.includes(c.code));
+  currentCountry = remaining[Math.floor(Math.random() * remaining.length)];
+  usedCountries.push(currentCountry.code);
+
+  questionCountEl.textContent = `${questionIndex + 1} / ${TOTAL_QUESTIONS}`;
+  countryNameEl.textContent = currentCountry.name;
+  highlightCountry(currentCountry.code);
+
+  const wrongOptions = getRandomCountries(currentCountry, OPTIONS_COUNT - 1);
+  const allOptions = shuffle([currentCountry, ...wrongOptions]);
+
+  allOptions.forEach(country => {
+    const btn = document.createElement("button");
+    btn.className = "option-btn";
+    btn.textContent = country.capital;
+    btn.dataset.code = country.code;
+    btn.addEventListener("click", () => handleAnswer(btn, country));
+    optionsEl.appendChild(btn);
+  });
+}
+
+function handleAnswer(btn, selectedCountry) {
+  if (answered) return;
+  answered = true;
+
+  const isCorrect = selectedCountry.code === currentCountry.code;
+
+  optionsEl.querySelectorAll(".option-btn").forEach(b => {
+    b.disabled = true;
+    if (b.dataset.code === currentCountry.code) b.classList.add("correct");
+  });
+
+  if (isCorrect) {
+    score++;
+    scoreEl.textContent = score;
+    feedbackEl.textContent = "정답! 🎉";
+    feedbackEl.className = "feedback correct";
+  } else {
+    btn.classList.add("wrong");
+    feedbackEl.textContent = `오답! 정답은 ${currentCountry.capital} 입니다.`;
+    feedbackEl.className = "feedback wrong";
+  }
+
+  questionIndex++;
+  nextBtn.textContent = questionIndex >= TOTAL_QUESTIONS ? "결과 보기" : "다음 문제";
+  nextBtn.style.display = "inline-block";
+}
+
+nextBtn.addEventListener("click", () => {
+  if (questionIndex >= TOTAL_QUESTIONS) showResult();
+  else loadQuestion();
+});
+
+function showResult() {
+  quizScreen.style.display = "none";
+  resultScreen.style.display = "flex";
+  const pct = Math.round((score / TOTAL_QUESTIONS) * 100);
+  let emoji = "😢";
+  if (pct >= 80) emoji = "🏆";
+  else if (pct >= 50) emoji = "👍";
+  finalScoreEl.innerHTML = `${score} / ${TOTAL_QUESTIONS}<br><span style="font-size:2rem">${emoji}</span><br><span style="font-size:1rem;color:#888">${pct}점</span>`;
+}
+
+restartBtn.addEventListener("click", () => {
+  score = 0;
+  questionIndex = 0;
+  usedCountries = [];
+  scoreEl.textContent = 0;
+  resultScreen.style.display = "none";
+  quizScreen.style.display = "flex";
+  loadQuestion();
+});
+</script>
+</body>
+</html>
